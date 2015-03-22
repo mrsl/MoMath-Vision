@@ -20,7 +20,14 @@ const double MAX_OBJECT_AREA = FRAME_HEIGHT * FRAME_WIDTH / 1.5;
 
 RNG rng(12345);
 
-string intToString(int number)
+OpenCVKinect cap;
+int lowThreshold = 50;
+int const maxLowThreshold = 100;
+int ratio = 3;
+int kernel_size = 3;
+
+template<typename Type>
+string numToString(Type number)
 {
 	stringstream ss;
 	ss << number;
@@ -67,10 +74,11 @@ void drawObject(int x, int y, Mat& frame)
 		line(frame, Point(x, y), Point(FRAME_WIDTH, y), Scalar(0, 255, 0), 2);
 	}
 
-	putText(frame, intToString(x) + "," + intToString(y), Point(x, y + 30), 1, 1, Scalar(0, 255, 0), 2);
+	putText(frame, numToString(x) + "," + numToString(y), Point(x, y + 30), 1, 1, Scalar(0, 255, 0), 2);
 
 }
 
+// Color Filter Tracking
 void trackFilteredObject(Mat& threshold, Mat& cameraFeed)
 {
 	Mat temp;
@@ -128,9 +136,7 @@ void trackFilteredObject(Mat& threshold, Mat& cameraFeed)
 					Scalar color = Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
 					drawContours(cameraFeed, contours, i, color, 2, 8, hierarchy, 0, Point());
 				}
-
 			}
-
 		}
 		else
 		{
@@ -139,9 +145,78 @@ void trackFilteredObject(Mat& threshold, Mat& cameraFeed)
 	}
 }
 
+// Edge Detection
+void CannyThreshold(int, void*)
+{
+	// Read Image
+	Mat imgOriginal;
+	bool bSuccess = cap.read(imgOriginal, ImageType::COLOR);
+	if (!bSuccess) //if not success, break loop
+	{
+		cout << "Cannot read a frame from video stream" << endl;
+	}
+
+	// Convert the captured frame from BGR to GRAY 
+	Mat imgGray;
+	cvtColor(imgOriginal, imgGray, COLOR_BGR2GRAY);
+
+	Mat detected_edges;
+	// Reduce noise with a kernel 3x3
+	blur(imgGray, detected_edges, Size(3, 3));
+
+	// Canny detector
+	Canny(detected_edges, detected_edges, lowThreshold, lowThreshold*ratio, kernel_size);
+
+	// Using Canny's output as a mask, we display our result
+	Mat canny = Mat::zeros(imgOriginal.size(), imgOriginal.type());
+	imgOriginal.copyTo(canny, detected_edges);
+	imshow("Thresholded Image", canny); //show the thresholded image
+
+	//these two vectors needed for output of findContours
+	vector< vector<Point> > contours;
+	vector<Vec4i> hierarchy;
+
+	//find contours of filtered image using openCV findContours function
+	findContours(detected_edges.clone(), contours, hierarchy, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
+	vector<Point> approx;
+	Mat dst = imgOriginal.clone();
+	for (int i = 0; i < contours.size(); i++)
+	{
+		approxPolyDP(Mat(contours[i]), approx, arcLength(Mat(contours[i]), true) * 0.01, true);
+
+		if (approx.size() == 4)
+		{
+			// Find Center
+			Moments moment = moments((cv::Mat) contours[i]);
+			double area = moment.m00;
+
+			//if the area is less than 20 px by 20px then it is probably just noise
+			//if the area is the same as the 3/2 of the image size, probably just a bad filter
+			//we only want the object with the largest area so we safe a reference area each
+			//iteration and compare it to the area in the next iteration.
+			if ((area > MIN_OBJECT_AREA) && (area < MAX_OBJECT_AREA))
+			{
+				int x = (int)(moment.m10 / area);
+				int y = (int)(moment.m01 / area);
+				drawObject(x, y, dst);
+
+				float wx, wy, wz = 0;
+				cap.distanceToPixel(x, y, wx, wy, wz);
+				putText(dst, numToString(wx) + "," + numToString(wy) + "," + numToString(wz), Point(0, 50), 1, 2, Scalar(0, 0, 255), 1);
+			}
+
+			line(dst, approx.at(0), approx.at(0), cvScalar(0, 0, 255), 4);
+			line(dst, approx.at(1), approx.at(1), cvScalar(0, 0, 255), 4);
+			line(dst, approx.at(2), approx.at(2), cvScalar(0, 0, 255), 4);
+			line(dst, approx.at(3), approx.at(3), cvScalar(0, 0, 255), 4);
+		}
+	}
+	imshow("detected lines", dst);
+}
+
+
 int main()
 {
-	OpenCVKinect cap;
 	if (!cap.init())
 	{
 		std::cout << "Error initializing" << std::endl;
@@ -151,64 +226,12 @@ int main()
 
 	namedWindow("Control", CV_WINDOW_AUTOSIZE); //create a window called "Control"
 
-	int iLowH = 0;
-	int iHighH = 179;
-
-	int iLowS = 0;
-	int iHighS = 255;
-
-	int iLowV = 0;
-	int iHighV = 255;
-
 	//Create trackbars in "Control" window
-	cvCreateTrackbar("LowH", "Control", &iLowH, 179); //Hue (0 - 179)
-	cvCreateTrackbar("HighH", "Control", &iHighH, 179);
+	cvCreateTrackbar("Threshold", "Control", &lowThreshold, maxLowThreshold);
 
-	cvCreateTrackbar("LowS", "Control", &iLowS, 255); //Saturation (0 - 255)
-	cvCreateTrackbar("HighS", "Control", &iHighS, 255);
-
-	cvCreateTrackbar("LowV", "Control", &iLowV, 255);//Value (0 - 255)
-	cvCreateTrackbar("HighV", "Control", &iHighV, 255);
-
-	while (true)
+	while (waitKey(30) != 27) //wait for 'esc' key press for 30ms. If 'esc' key is pressed, break loop
 	{
-		// Read Image
-		Mat imgOriginal;
-		bool bSuccess = cap.read(imgOriginal, ImageType::COLOR);
-		if (!bSuccess) //if not success, break loop
-		{
-			cout << "Cannot read a frame from video stream" << endl;
-			break;
-		}
-
-		//Convert the captured frame from BGR to HSV 
-		Mat imgHSV;
-		cvtColor(imgOriginal, imgHSV, COLOR_BGR2HSV);
-
-		// Binary Min/Max Threshold
-		Mat imgThresholded;
-		inRange(imgHSV, Scalar(iLowH, iLowS, iLowV), Scalar(iHighH, iHighS, iHighV), imgThresholded); //Threshold the image
-
-		// Morphological Operations to remove background noise
-		// morphological opening (removes small objects from the foreground)
-		erode(imgThresholded, imgThresholded, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-		dilate(imgThresholded, imgThresholded, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-
-		// morphological closing (removes small holes from the foreground)
-		dilate(imgThresholded, imgThresholded, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-		erode(imgThresholded, imgThresholded, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-
-		// Find Contours and Moments to track object
-		trackFilteredObject(imgThresholded, imgOriginal);
-
-		imshow("Thresholded Image", imgThresholded); //show the thresholded image
-		imshow("Original", imgOriginal); //show the original image
-
-		if (waitKey(30) == 27) //wait for 'esc' key press for 30ms. If 'esc' key is pressed, break loop
-		{
-			cout << "esc key is pressed by user" << endl;
-			break;
-		}
+		CannyThreshold(0, 0);
 	}
 	return 0;
 }

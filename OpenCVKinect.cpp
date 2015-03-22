@@ -146,6 +146,15 @@ bool OpenCVKinect::read(cv::Mat& returnImage, ImageType type)
 	return true;
 }
 
+openni::Status OpenCVKinect::distanceToPixel(int x, int y, float& wx, float& wy, float& wz)
+{
+	openni::VideoFrameRef m_depthFrame;
+	m_depth.readFrame(&m_depthFrame);
+	openni::DepthPixel* pDepth = (openni::DepthPixel*) m_depthFrame.getData();
+	int pos = y * m_depthFrame.getWidth() + x;
+	return openni::CoordinateConverter::convertDepthToWorld(m_depth, x, y, pDepth[pos], &wx, &wy, &wz);
+}
+
 openni::Status OpenCVKinect::registerDepthAndImage()
 {
 	if (m_device.isValid())

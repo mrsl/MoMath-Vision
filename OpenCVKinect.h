@@ -60,5 +60,6 @@ public:
 	bool read(cv::Mat& returnVec, ImageType type);
 	bool init();
 	openni::Status registerDepthAndImage();
+	openni::Status distanceToPixel(int x, int y, float& wx, float& wy, float& wz);
 	~OpenCVKinect(void);
 };
